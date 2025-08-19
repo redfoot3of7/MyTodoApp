@@ -1,22 +1,33 @@
 /*
  * File: MainActivity.kt
  * Path: E:/Documents/Android_Studio_Projects/MyTodoApp/app/src/main/java/com/drware/mytodoapp/MainActivity.kt
- * Date: Mon Aug 18 12:24:11 2025
- * Purpose: This is the main screen of the application. It displays the list of to-do items
- * and handles user interactions like adding, deleting, and updating tasks.
+ * Date: Mon Aug 18 16:58:23 2025
+ * Purpose: This is the main screen of the application. It now includes logic to
+ * request microphone permission before launching the voice input feature.
  */
 
 package com.drware.mytodoapp
 
+import android.Manifest
+import android.app.Activity
 import android.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,39 +37,57 @@ class MainActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var todoDao: TodoDao
 
+    private var activeTodoEditText: EditText? = null
+
+    private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+        if (isGranted) {
+            launchSpeechToText()
+        } else {
+            Toast.makeText(this, "Microphone permission is required for voice input", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val speechToTextLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data: Intent? = result.data
+            val spokenText: String? =
+                data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.let { results -> results[0] }
+            activeTodoEditText?.setText(spokenText)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize the database and DAO
         db = AppDatabase.getDatabase(this)
         todoDao = db.todoDao()
 
-        // Initialize the adapter with an empty list and provide both lambdas
+        // ✅ This initialization block has the correct lambda order and parameters.
         todoAdapter = TodoAdapter(
             mutableListOf(),
-            // 1. Lambda for checkbox changes
+            // Lambda #1 for onItemClick (takes one Int parameter)
+            { position ->
+                val todoToEdit = todoAdapter.getTodoAt(position)
+                showAddOrEditTodoDialog(todoToEdit)
+            },
+            // Lambda #2 for onCheckedChange (takes two parameters: Int, Boolean)
             { position, isChecked ->
                 updateTodoCheckedState(position, isChecked)
-            },
-            // 2. Lambda for delete clicks
-            { position ->
-                deleteTodo(position)
             }
         )
 
-        // Initialize UI components
         rvTodoItems = findViewById(R.id.rvTodoItems)
         fabAddTask = findViewById(R.id.fabAddTask)
         rvTodoItems.adapter = todoAdapter
         rvTodoItems.layoutManager = LinearLayoutManager(this)
 
-        // Set listener for the Floating Action Button
         fabAddTask.setOnClickListener {
-            showAddTodoDialog()
+            showAddOrEditTodoDialog(null)
         }
 
-        // Collect all items from the database and update the list reactively
+        setupSwipeToDelete()
+
         lifecycleScope.launch {
             todoDao.getAll().collect { todos ->
                 todoAdapter.updateTodos(todos.toMutableList())
@@ -66,24 +95,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showAddTodoDialog() {
+    private fun showAddOrEditTodoDialog(todo: Todo?) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_add_todo, null)
         val etTodoTitle = dialogView.findViewById<EditText>(R.id.etTodoTitle)
+        val btnVoiceInput = dialogView.findViewById<ImageButton>(R.id.btnVoiceInput)
+
+        activeTodoEditText = etTodoTitle
+        val dialogTitle = if (todo == null) "Add New Todo" else "Edit Todo"
+        val positiveButtonTitle = if (todo == null) "Add" else "Save"
+        etTodoTitle.setText(todo?.title ?: "")
+
+        btnVoiceInput.setOnClickListener {
+            checkPermissionAndLaunchSpeechToText()
+        }
 
         AlertDialog.Builder(this)
-            .setTitle("Add New Todo")
+            .setTitle(dialogTitle)
             .setView(dialogView)
-            .setPositiveButton("Add") { _, _ ->
+            .setPositiveButton(positiveButtonTitle) { _, _ ->
                 val todoTitle = etTodoTitle.text.toString()
                 if (todoTitle.isNotBlank()) {
                     lifecycleScope.launch {
-                        val newTodo = Todo(title = todoTitle)
-                        todoDao.insert(newTodo)
+                        if (todo == null) {
+                            val newTodo = Todo(title = todoTitle)
+                            todoDao.insert(newTodo)
+                        } else {
+                            val updatedTodo = todo.copy(title = todoTitle)
+                            todoDao.update(updatedTodo)
+                        }
                     }
                 }
             }
             .setNegativeButton("Cancel", null)
+            .setOnDismissListener { activeTodoEditText = null }
             .show()
+    }
+
+    private fun checkPermissionAndLaunchSpeechToText() {
+        when {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> {
+                launchSpeechToText()
+            }
+            else -> {
+                requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+
+    private fun launchSpeechToText() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak the task title")
+        }
+        try {
+            speechToTextLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Speech recognition is not available", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun deleteTodo(position: Int) {
@@ -96,10 +165,23 @@ class MainActivity : AppCompatActivity() {
     private fun updateTodoCheckedState(position: Int, isChecked: Boolean) {
         val itemToUpdate = todoAdapter.getTodoAt(position)
         val updatedItem = itemToUpdate.copy(isChecked = isChecked)
-
         lifecycleScope.launch {
             todoDao.update(updatedItem)
         }
+    }
+
+    private fun setupSwipeToDelete() {
+        val itemTouchHelperCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+            override fun onMove(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder) = false
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                val position = viewHolder.bindingAdapterPosition
+                if (position != RecyclerView.NO_POSITION) {
+                    deleteTodo(position)
+                }
+            }
+        }
+        val itemTouchHelper = ItemTouchHelper(itemTouchHelperCallback)
+        itemTouchHelper.attachToRecyclerView(rvTodoItems)
     }
 }
 

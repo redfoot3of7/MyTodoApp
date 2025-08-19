@@ -1,3 +1,11 @@
+/*
+ * File: TodoAdapter.kt
+ * Path: E:/Documents/Android_Studio_Projects/MyTodoApp/app/src/main/java/com/drware/mytodoapp/TodoAdapter.kt
+ * Date: Mon Aug 18 17:06:27 2025
+ * Purpose: This adapter manages the list of to-do items for the RecyclerView. It handles
+ * item clicks for editing and checkbox changes to support a fully interactive list.
+ */
+
 package com.drware.mytodoapp
 
 import android.graphics.Paint
@@ -6,10 +14,11 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.drware.mytodoapp.databinding.ItemTodoBinding
 
+// ✅ This is the correct constructor that MainActivity is trying to call.
 class TodoAdapter(
     private var todos: MutableList<Todo>,
-    private val onCheckedChange: (position: Int, isChecked: Boolean) -> Unit,
-    private val onDeleteClick: (position: Int) -> Unit
+    private val onItemClick: (position: Int) -> Unit,
+    private val onCheckedChange: (position: Int, isChecked: Boolean) -> Unit
 ) : RecyclerView.Adapter<TodoAdapter.TodoViewHolder>() {
 
     inner class TodoViewHolder(val binding: ItemTodoBinding) : RecyclerView.ViewHolder(binding.root)
@@ -31,22 +40,20 @@ class TodoAdapter(
             cbDone.isChecked = currentTodo.isChecked
             toggleStrikeThrough(tvTodoTitle, currentTodo.isChecked)
 
+            // ✅ This listener handles the click for editing the task.
+            tvTodoTitle.setOnClickListener {
+                val currentPosition = holder.bindingAdapterPosition
+                if (currentPosition != RecyclerView.NO_POSITION) {
+                    onItemClick(currentPosition)
+                }
+            }
+
+            // This listener handles the checkbox state change.
             cbDone.setOnCheckedChangeListener { _, isChecked ->
                 val currentPosition = holder.bindingAdapterPosition
                 if (currentPosition != RecyclerView.NO_POSITION) {
                     toggleStrikeThrough(tvTodoTitle, isChecked)
                     onCheckedChange(currentPosition, isChecked)
-                }
-            }
-
-            // ✅ This block now exactly matches the robust code example
-            ivDelete.setOnClickListener {
-                // Use the safer bindingAdapterPosition property
-                val position = holder.bindingAdapterPosition
-
-                // Always check for a valid position before calling your action
-                if (position != RecyclerView.NO_POSITION) {
-                    onDeleteClick(position)
                 }
             }
         }
@@ -74,3 +81,5 @@ class TodoAdapter(
         }
     }
 }
+
+/* EOF */
