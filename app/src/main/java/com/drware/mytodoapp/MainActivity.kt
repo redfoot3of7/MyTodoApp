@@ -1,9 +1,9 @@
 /*
  * File: MainActivity.kt
  * Path: E:/Documents/Android_Studio_Projects/MyTodoApp/app/src/main/java/com/drware/mytodoapp/MainActivity.kt
- * Date: Mon Aug 18 16:58:23 2025
- * Purpose: This is the main screen of the application. It now includes logic to
- * request microphone permission before launching the voice input feature.
+ * Date: Mon Aug 18 18:02:23 2025
+ * Purpose: This is the main screen (the "View"). It now correctly provides the
+ * repository to the ViewModelFactory, completing the MVVM refactor.
  */
 
 package com.drware.mytodoapp
@@ -19,6 +19,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -26,6 +27,7 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -34,24 +36,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var todoAdapter: TodoAdapter
     private lateinit var rvTodoItems: RecyclerView
     private lateinit var fabAddTask: FloatingActionButton
-    private lateinit var db: AppDatabase
-    private lateinit var todoDao: TodoDao
 
-    private var activeTodoEditText: EditText? = null
-
-    private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-        if (isGranted) {
-            launchSpeechToText()
-        } else {
-            Toast.makeText(this, "Microphone permission is required for voice input", Toast.LENGTH_SHORT).show()
-        }
+    // ✅ Changed: We now get the repository from our Application class and pass it to the factory.
+    private val todoViewModel: TodoViewModel by viewModels {
+        TodoViewModelFactory((application as TodoApplication).repository)
     }
 
+    private var activeTodoEditText: EditText? = null
+    private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) { launchSpeechToText() } else {
+            Toast.makeText(this, "Microphone permission is required", Toast.LENGTH_SHORT).show()
+        }
+    }
     private val speechToTextLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val data: Intent? = result.data
-            val spokenText: String? =
-                data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.let { results -> results[0] }
+            val spokenText = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.get(0)
             activeTodoEditText?.setText(spokenText)
         }
     }
@@ -60,18 +60,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        db = AppDatabase.getDatabase(this)
-        todoDao = db.todoDao()
-
-        // ✅ This initialization block has the correct lambda order and parameters.
         todoAdapter = TodoAdapter(
             mutableListOf(),
-            // Lambda #1 for onItemClick (takes one Int parameter)
             { position ->
                 val todoToEdit = todoAdapter.getTodoAt(position)
                 showAddOrEditTodoDialog(todoToEdit)
             },
-            // Lambda #2 for onCheckedChange (takes two parameters: Int, Boolean)
             { position, isChecked ->
                 updateTodoCheckedState(position, isChecked)
             }
@@ -89,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         setupSwipeToDelete()
 
         lifecycleScope.launch {
-            todoDao.getAll().collect { todos ->
+            todoViewModel.allTodos.collect { todos ->
                 todoAdapter.updateTodos(todos.toMutableList())
             }
         }
@@ -115,14 +109,10 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(positiveButtonTitle) { _, _ ->
                 val todoTitle = etTodoTitle.text.toString()
                 if (todoTitle.isNotBlank()) {
-                    lifecycleScope.launch {
-                        if (todo == null) {
-                            val newTodo = Todo(title = todoTitle)
-                            todoDao.insert(newTodo)
-                        } else {
-                            val updatedTodo = todo.copy(title = todoTitle)
-                            todoDao.update(updatedTodo)
-                        }
+                    if (todo == null) {
+                        todoViewModel.insert(Todo(title = todoTitle))
+                    } else {
+                        todoViewModel.update(todo.copy(title = todoTitle))
                     }
                 }
             }
@@ -155,28 +145,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun deleteTodo(position: Int) {
-        val itemToDelete = todoAdapter.getTodoAt(position)
-        lifecycleScope.launch {
-            todoDao.delete(itemToDelete)
-        }
-    }
-
     private fun updateTodoCheckedState(position: Int, isChecked: Boolean) {
         val itemToUpdate = todoAdapter.getTodoAt(position)
-        val updatedItem = itemToUpdate.copy(isChecked = isChecked)
-        lifecycleScope.launch {
-            todoDao.update(updatedItem)
-        }
+        todoViewModel.update(itemToUpdate.copy(isChecked = isChecked))
     }
 
     private fun setupSwipeToDelete() {
         val itemTouchHelperCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder) = false
+
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val position = viewHolder.bindingAdapterPosition
                 if (position != RecyclerView.NO_POSITION) {
-                    deleteTodo(position)
+                    val todoToDelete = todoAdapter.getTodoAt(position)
+                    todoViewModel.delete(todoToDelete)
+
+                    Snackbar.make(findViewById(R.id.coordinatorLayout), "Task deleted", Snackbar.LENGTH_LONG)
+                        .setAction("Undo") {
+                            todoViewModel.undoDelete()
+                        }
+                        .show()
                 }
             }
         }

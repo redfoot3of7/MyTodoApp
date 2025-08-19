@@ -41,7 +41,7 @@ android {
 }
 
 dependencies {
-
+    implementation("com.google.android.material:material:1.12.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -59,4 +59,6 @@ dependencies {
     ksp("androidx.room:room-compiler:$room_version")
     // Add or update this line to a recent version
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
 }
